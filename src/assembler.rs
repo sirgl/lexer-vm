@@ -52,7 +52,7 @@ impl Assembler {
     // 14 bit on every operand
     fn emit_binary_instr(&mut self, opcode: Opcode, first: u16, second: u16) {
         // TODO check 14 bit
-        let payload = (first << 14) as u32 | (second as u32);
+        let payload = ((first as u32) << 14) as u32 | (second as u32);
         self.emit_instr(opcode, payload)
     }
 

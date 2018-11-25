@@ -13,10 +13,20 @@ pub fn decode<'a>(code: u32) -> Instruction {
         Opcode::CharImm => Instruction::CharImm { ch: from_u32(payload).unwrap() },
         Opcode::CharCp => Instruction::CharCp { ch_index: payload as PoolIndex },
         Opcode::Match => Instruction::Match { token_type_index: payload as u16 },
-        Opcode::Split => Instruction::Split { then_instr_index: payload as u16, else_instr_index: 0 },
+        Opcode::Split => {
+            let (left, right) = decode_binary(payload);
+            Instruction::Split { then_instr_index: left, else_instr_index: right }
+        },
         Opcode::Jmp => Instruction::Jmp { instr_index: payload as CodePointer },
         _ => unimplemented!("code not implemented yet")
     }
+}
+
+fn decode_binary(payload: u32) -> (u16, u16) {
+    let mask = 0b0011_1111_1111_1111;
+    let left = (payload >> 14) & mask;
+    let right = payload & mask;
+    (left as u16, right as u16)
 }
 
 fn trim_tag(tagged: u32) -> u32 {

@@ -112,12 +112,12 @@ impl Vm {
         let code = &self.code;
         let mut has_match = false;
         let mut all_failed = true;
-        for cp_index in self.current_threads.iter() {
-            let instruction = code[cp_index];
+        for code_pointer in self.current_threads.iter() {
+            let instruction = code[code_pointer];
             match decode(instruction) {
                 Instruction::CharImm { ch: instr_ch } => {
                     if ch.is_some() && instr_ch == ch.unwrap() {
-                        self.next_threads.insert(cp_index + 1);
+                        self.next_threads.insert(code_pointer + 1);
                         all_failed = false;
                     }
                 }
@@ -131,8 +131,10 @@ impl Vm {
                     self.max_token_index = std::cmp::max(self.max_token_index, token_type_index)
                 }
                 Instruction::Split { then_instr_index, else_instr_index } => {
-                    self.next_threads.insert(then_instr_index as usize);
-                    self.next_threads.insert(else_instr_index as usize);
+                    let i = then_instr_index as usize;
+                    self.next_threads.insert(i);
+                    let i1 = else_instr_index as usize;
+                    self.next_threads.insert(i1);
                     all_failed = false;
                 }
                 Instruction::Jmp { instr_index } => {
@@ -170,33 +172,62 @@ impl Iterator for Vm {
 mod tests {
     use super::*;
     use assembler::Assembler;
+    use assembler::ProgramData;
+
+//    #[test]
+//    fn single_char() {
+//        let mut asm = Assembler::new();
+//        asm.emit_char_imm('a');
+//        asm.emit_match(2);
+//        test_vm(asm.finish(), 3, "a", vec![
+//            TokenRaw::new(1, 2),
+//            TokenRaw::new(0, END_TOKEN_INDEX)
+//        ])
+//    }
+//
+//    #[test]
+//    fn two_chars() {
+//        let mut asm = Assembler::new();
+//        asm.emit_char_imm('a');
+//        asm.emit_char_imm('a');
+//        asm.emit_match(2);
+//        test_vm(asm.finish(), 3, "aa", vec![
+//            TokenRaw::new(2, 2),
+//            TokenRaw::new(0, END_TOKEN_INDEX)
+//        ])
+//    }
+//
+//    #[test]
+//    fn lex_loop() {
+//        let mut asm = Assembler::new();
+//        asm.emit_char_imm('a');
+//        asm.emit_split(0, 2);
+//        asm.emit_match(2);
+//        test_vm(asm.finish(), 3, "aaaa", vec![
+//            TokenRaw::new(4, 2),
+//            TokenRaw::new(0, END_TOKEN_INDEX)
+//        ])
+//    }
 
     #[test]
-    fn single_char() {
+    fn lex_two_tokens() {
         let mut asm = Assembler::new();
+        // a | b regex code
+        asm.emit_split(1, 3);
         asm.emit_char_imm('a');
         asm.emit_match(2);
-        let program_data = asm.finish();
-        let mut vm = Vm::new(program_data.code, program_data.constant_pool, 3);
-        let tokens = vm.tokenize("a");
-        assert_eq!(vec![
+        asm.emit_char_imm('b');
+        asm.emit_match(3);
+        test_vm(asm.finish(), 4, "ab", vec![
             TokenRaw::new(1, 2),
+            TokenRaw::new(1, 3),
             TokenRaw::new(0, END_TOKEN_INDEX)
-        ], tokens);
+        ])
     }
 
-    #[test]
-    fn two_chars() {
-        let mut asm = Assembler::new();
-        asm.emit_char_imm('a');
-        asm.emit_char_imm('a');
-        asm.emit_match(2);
-        let program_data = asm.finish();
+    fn test_vm(program_data: ProgramData, token_types_count: usize, text: &str, expected_tokens: Vec<TokenRaw>) {
         let mut vm = Vm::new(program_data.code, program_data.constant_pool, 3);
-        let tokens = vm.tokenize("aa");
-        assert_eq!(vec![
-            TokenRaw::new(2, 2),
-            TokenRaw::new(0, END_TOKEN_INDEX)
-        ], tokens);
+        let tokens = vm.tokenize(text);
+        assert_eq!(expected_tokens, tokens);
     }
 }
