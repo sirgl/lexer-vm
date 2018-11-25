@@ -23,11 +23,12 @@ pub struct Vm {
     max_token_index: u16,
 }
 
+
+
 impl Vm {
     pub fn new(code: Vec<u32>, constant_pool: Vec<u32>, token_types_count: usize) -> Self {
         let code_len = code.len();
         let mut current_threads = BitSet::with_capacity(token_types_count);
-        current_threads.insert(0);
         Vm {
             code,
             constant_pool,
@@ -60,8 +61,10 @@ impl Vm {
         let mut token_end: u32 = 0;
         let mut error_mode = false;
         let mut matched_indices = BitSet::with_capacity(self.token_types_count);
-
+        self.add_thread(0);
+        swap(&mut self.current_threads, &mut self.next_threads);
         for ch in text.chars() {
+            eprintln!("self.current_threads = {:?}", self.current_threads);
             // has a match on this iteration
             let mut match_res = self.match_char(&mut matched_indices, Option::Some(ch));
             if !match_res.some_threads_succeed {
@@ -76,7 +79,10 @@ impl Vm {
                     matched_indices.clear();
                     self.match_char(&mut matched_indices, Option::Some(ch));
                     tokens.push(token);
-                    token_start = token_end
+                    self.max_token_index = 0;
+                    token_start = token_end;
+                    self.add_thread(0);
+                    swap(&mut self.current_threads, &mut self.next_threads);
                 }
             } else {
                 if error_mode {
@@ -85,6 +91,10 @@ impl Vm {
                         token_end - token_start,
                         ERROR_TOKEN_INDEX,
                     ));
+                    self.max_token_index = 0;
+                    token_start = token_end;
+                    self.add_thread(0);
+                    swap(&mut self.current_threads, &mut self.next_threads);
                 }
             }
             token_end += ch.len_utf8() as u32;
@@ -107,21 +117,37 @@ impl Vm {
         tokens
     }
 
+    /// handles all not immediately advancing instructions
+    fn add_thread(&mut self, pc: CodePointer) {
+        let instruction = self.code[pc as usize];
+        match decode(instruction) {
+            Instruction::Split { then_instr_index, else_instr_index } => {
+                self.add_thread(then_instr_index);
+                self.add_thread(else_instr_index);
+            },
+            Instruction::Jmp { instr_index } => self.add_thread(instr_index),
+            _ => {
+                self.next_threads.insert(pc as usize);
+            }
+        }
+    }
+
 
     fn match_char(&mut self, matched_indices: &mut BitSet<u32>, ch: Option<char>) -> MatchResult {
-        let code = &self.code;
         let mut has_match = false;
         let mut all_failed = true;
+        let mut next: Option<CodePointer> = Option::None;
         for code_pointer in self.current_threads.iter() {
-            let instruction = code[code_pointer];
+            let instruction = self.code[code_pointer];
             match decode(instruction) {
+                // must handle here only strictly advancing operations
                 Instruction::CharImm { ch: instr_ch } => {
                     if ch.is_some() && instr_ch == ch.unwrap() {
-                        self.next_threads.insert(code_pointer + 1);
+                        let new_code_pointer = (code_pointer + 1) as CodePointer;
+                        next = Option::Some(new_code_pointer);
                         all_failed = false;
                     }
                 }
-                Instruction::CharCp { .. } => unimplemented!(),
                 Instruction::Match { token_type_index } => {
                     if !has_match {
                         matched_indices.clear();
@@ -130,18 +156,12 @@ impl Vm {
                     matched_indices.insert(token_type_index as usize);
                     self.max_token_index = std::cmp::max(self.max_token_index, token_type_index)
                 }
-                Instruction::Split { then_instr_index, else_instr_index } => {
-                    let i = then_instr_index as usize;
-                    self.next_threads.insert(i);
-                    let i1 = else_instr_index as usize;
-                    self.next_threads.insert(i1);
-                    all_failed = false;
-                }
-                Instruction::Jmp { instr_index } => {
-                    self.next_threads.insert(instr_index as usize);
-                    all_failed = false;
-                }
+                _ => {}
             }
+        }
+        match next {
+            Some(cp) => self.add_thread(cp),
+            None => {},
         }
         return MatchResult::new(has_match, !all_failed);
     }
