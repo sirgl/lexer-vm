@@ -1,6 +1,7 @@
 //#![feature(test)]
 
 extern crate core;
+extern crate bit_set;
 
 mod vm;
 mod opcodes;
