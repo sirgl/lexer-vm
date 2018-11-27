@@ -17,6 +17,13 @@ pub fn decode<'a>(code: u32) -> Instruction {
             let (left, right) = decode_binary(payload);
             Instruction::Split { then_instr_index: left, else_instr_index: right }
         },
+        Opcode::RangeImm => {
+            let (left, right) = decode_binary(payload);
+            Instruction::RangeImm {
+                from: from_u32(left as u32).unwrap(),
+                to: from_u32(right as u32).unwrap()
+            }
+        },
         Opcode::Jmp => Instruction::Jmp { instr_index: payload as CodePointer },
         Opcode::SplitMany => Instruction::SplitMany  { table_index: payload as u16 },
         _ => unimplemented!("code not implemented yet")
@@ -45,6 +52,7 @@ pub enum Instruction {
     Split { then_instr_index: CodePointer, else_instr_index: CodePointer },
     SplitMany { table_index: u16 },
     Jmp { instr_index: CodePointer },
+    RangeImm { from: char, to: char },
 }
 
 impl fmt::Display for Instruction {
@@ -57,6 +65,7 @@ impl fmt::Display for Instruction {
                 { write!(f, "split then_instr_index: {} else_instr_index: {}, ", then_instr_index, else_instr_index) }
             Instruction::Jmp { instr_index } => { write!(f, "jmp instr_index: {}", instr_index) }
             Instruction::SplitMany { table_index } => { write!(f, "split_many table_index: {}", table_index) }
+            Instruction::RangeImm { from, to } => { write!(f, "range_imm from: {}, to: {}", from, to) }
         }
     }
 }

@@ -50,6 +50,11 @@ impl Assembler {
         self.emit_instr(Opcode::Match, token_type_index as u32)
     }
 
+    pub fn emit_range_imm(&mut self, from: char, to: char) {
+        // TODO assert, that from and to fits into 14 bits
+        self.emit_binary_instr(Opcode::RangeImm, from as u16, to as u16)
+    }
+
     pub fn emit_split(&mut self, then_instr_index: CodePointer, else_instr_index: CodePointer) -> (PatchMarker, PatchMarker) {
         self.emit_binary_instr(Opcode::Split, then_instr_index, else_instr_index);
         let position = self.last_code_position();

@@ -55,7 +55,7 @@ impl Compiler {
                 self.asm.emit_char_imm(*ch);
             },
             Expr::Range { from, to } => {
-
+                self.asm.emit_range_imm(*from, *to);
             },
             Expr::Or { variants } => {
                 match variants.len() {
@@ -135,6 +135,29 @@ mod tests {
             Split { then_instr_index: 4, else_instr_index: 5 },
             CharImm { ch: 'c' },
             CharImm { ch: 'd' },
+            Match { token_type_index: 2 }
+        ], vec![1]);
+    }
+
+    #[test]
+    fn range() {
+        let mut compiler = Compiler::new();
+        let expr = Expr::Range {
+            from: 'a',
+            to: 'z',
+        };
+        let lexer_definition = LexerDefinition {
+            tokens: vec![
+                TokenDefinition {
+                    expr,
+                    index: 2,
+                    name: "foo".to_string()
+                }
+            ]
+        };
+        check_compiler(&mut compiler, &lexer_definition, vec![
+            SplitMany { table_index: 0 },
+            RangeImm { from: 'a', to: 'z' },
             Match { token_type_index: 2 }
         ], vec![1]);
     }
