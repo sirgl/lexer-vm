@@ -15,6 +15,11 @@ fn is_valid_inline_code_point(code_point: u32) -> bool {
 pub type CodePointer = u16;
 pub type PoolIndex = u16;
 
+pub struct PatchMarker {
+    position: CodePointer,
+    is_first: bool
+}
+
 impl Assembler {
     pub fn new() -> Self {
         Assembler {
@@ -41,12 +46,35 @@ impl Assembler {
         self.emit_instr(Opcode::Match, token_type_index as u32)
     }
 
-    pub fn emit_split(&mut self, then_instr_index: CodePointer, else_instr_index: CodePointer) {
-        self.emit_binary_instr(Opcode::Split, then_instr_index, else_instr_index)
+    pub fn emit_split(&mut self, then_instr_index: CodePointer, else_instr_index: CodePointer) -> (PatchMarker, PatchMarker) {
+        self.emit_binary_instr(Opcode::Split, then_instr_index, else_instr_index);
+        let position = self.prev_code_position();
+        return (PatchMarker { position, is_first: false }, PatchMarker { position, is_first: true })
     }
 
     pub fn emit_jmp(&mut self, instr_index: CodePointer) {
         self.emit_instr(Opcode::Jmp, instr_index as u32)
+    }
+
+    pub fn next_code_position(&self) -> CodePointer {
+        self.buffer.len() as CodePointer
+    }
+
+    fn prev_code_position(&self) -> CodePointer {
+        (self.buffer.len() - 1) as CodePointer
+    }
+
+    pub fn patch_target(&mut self, patch_marker: &PatchMarker, new_pos: CodePointer) {
+        let instruction = self.buffer[patch_marker.position as usize];
+        if patch_marker.is_first {
+            let mask = !0b11_1111_1111_1111;
+            let new_instruction = (instruction & mask) | new_pos as u32;
+            self.buffer[patch_marker.position as usize] = new_instruction;
+        } else {
+            let mask = !(0b11_1111_1111_1111 << 14);
+            let new_instruction = (instruction & mask) | ((new_pos as u32) << 14);
+            self.buffer[patch_marker.position as usize] = new_instruction;
+        }
     }
 
     // 14 bit on every operand

@@ -24,14 +24,14 @@ pub struct Vm {
 
 
 impl Vm {
-    pub fn new(code: Vec<u32>, constant_pool: Vec<u32>, token_types_count: usize) -> Self {
+    pub fn new(code: Vec<u32>, constant_pool: Vec<u32>) -> Self {
         let code_len = code.len();
-        let mut current_threads = BitSet::with_capacity(token_types_count);
+        let mut current_threads = BitSet::with_capacity(code_len);
         Vm {
             code,
             constant_pool,
             current_threads,
-            next_threads: BitSet::with_capacity(token_types_count),
+            next_threads: BitSet::with_capacity(code_len),
         }
     }
 }
@@ -297,7 +297,7 @@ mod tests {
     }
 
     fn test_vm(program_data: ProgramData, text: &str, expected_tokens: Vec<TokenRaw>) {
-        let mut vm = Vm::new(program_data.code, program_data.constant_pool, 3);
+        let mut vm = Vm::new(program_data.code, program_data.constant_pool);
         let tokens: Vec<TokenRaw> = LexingSession::new(&mut vm, text).collect();
 //        let tokens = vm.tokenize(text);
         assert_eq!(expected_tokens, tokens);

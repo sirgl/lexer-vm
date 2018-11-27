@@ -7,6 +7,8 @@ mod vm;
 mod opcodes;
 mod assembler;
 mod disasm;
+mod ast;
+mod compiler;
 
 use vm::Vm;
 use assembler::Assembler;
