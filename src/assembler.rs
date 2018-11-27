@@ -20,6 +20,10 @@ pub struct PatchMarker {
     is_first: bool
 }
 
+pub struct SplitManyMarker {
+    position: CodePointer
+}
+
 impl Assembler {
     pub fn new() -> Self {
         Assembler {
@@ -48,7 +52,7 @@ impl Assembler {
 
     pub fn emit_split(&mut self, then_instr_index: CodePointer, else_instr_index: CodePointer) -> (PatchMarker, PatchMarker) {
         self.emit_binary_instr(Opcode::Split, then_instr_index, else_instr_index);
-        let position = self.prev_code_position();
+        let position = self.last_code_position();
         return (PatchMarker { position, is_first: false }, PatchMarker { position, is_first: true })
     }
 
@@ -56,11 +60,24 @@ impl Assembler {
         self.emit_instr(Opcode::Jmp, instr_index as u32)
     }
 
+    pub fn emit_split_many(&mut self) -> SplitManyMarker {
+        let table_marker = SplitManyMarker { position: self.next_code_position() };
+        self.emit_instr(Opcode::SplitMany, 0);
+        table_marker
+    }
+
+    pub fn patch_split_many(&mut self, marker: &SplitManyMarker, table: Vec<CodePointer>) {
+        let table_index = self.cp_buffer.len();
+        let old_instruction = self.buffer[marker.position as usize];
+        self.buffer[marker.position as usize] = (old_instruction & (0b1111_1111_1111_1111 << 16)) | (table_index as u32);
+        self.cp_buffer.extend(table.iter().map(|el| *el as u32));
+    }
+
     pub fn next_code_position(&self) -> CodePointer {
         self.buffer.len() as CodePointer
     }
 
-    fn prev_code_position(&self) -> CodePointer {
+    fn last_code_position(&self) -> CodePointer {
         (self.buffer.len() - 1) as CodePointer
     }
 
