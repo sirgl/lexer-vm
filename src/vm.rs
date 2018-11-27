@@ -9,7 +9,7 @@ use std::{
     mem::swap,
     borrow::Borrow,
     iter,
-    cmp::max
+    cmp::max,
 };
 use bit_set::BitSet;
 
@@ -17,12 +17,11 @@ use bit_set::BitSet;
 pub struct Vm {
     code: Vec<u32>,
     constant_pool: Vec<u32>,
+    // TODO put threads to LexerSession
     current_threads: BitSet,
     next_threads: BitSet,
     token_types_count: usize,
-    max_token_index: u16,
 }
-
 
 
 impl Vm {
@@ -35,19 +34,129 @@ impl Vm {
             current_threads,
             next_threads: BitSet::with_capacity(token_types_count),
             token_types_count,
-            max_token_index: 0,
         }
     }
 }
 
+
+struct LexingSession<'a, 'b> {
+    vm: &'a mut Vm,
+    token_start: u32,
+    text: &'b str,
+    position: usize,
+    is_end: bool,
+}
+
+
+#[derive(Copy, Clone)]
+struct BestToken {
+    token_index: u16,
+    end_position: usize,
+}
+
+impl BestToken {
+    pub fn new(token_index: u16, end_position: usize) -> Self {
+        BestToken { token_index, end_position }
+    }
+}
+
+impl<'a, 'b> LexingSession<'a, 'b> {
+    pub fn new(vm: &'a mut Vm, text: &'b str) -> Self {
+        LexingSession {
+            vm,
+            token_start: 0,
+            text,
+            position: 0,
+            is_end: false
+        }
+    }
+
+    fn token_len(&self) -> u32 {
+        return self.position as u32 - self.token_start;
+    }
+}
+
+impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
+    type Item = TokenRaw;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        if self.is_end {
+            return Option::None;
+        }
+        let mut best : Option<BestToken> = Option::None;
+        let mut error_mode = false;
+        self.vm.add_thread(0, false);
+        let (_, text) = self.text.split_at(self.position);
+        if self.position == self.text.len() {
+            self.is_end = true;
+            return Some(TokenRaw::new(0, END_TOKEN_INDEX));
+        }
+        eprintln!("Lexing at position {:?}", self.position);
+        let mut result = Option::None;
+        for ch in text.chars() {
+            eprintln!("ch = {:?}", ch);
+            eprintln!("self.current_threads = {:?}", self.vm.current_threads);
+            let match_res = self.vm.match_char(ch);
+            // trying update BestToken
+            if let Some(new_max_index) = match_res.max_matched_token_index {
+                if let Some(max_length_token) = best {
+                    if max_length_token.token_index <= new_max_index {
+                        let new_max_len_info = BestToken::new(new_max_index, self.position);
+                        best = Some(new_max_len_info)
+                    }
+                } else {
+                    let info = BestToken::new(new_max_index, self.position);
+                    best = Option::Some(info);
+                }
+            }
+            if match_res.all_threads_failed {
+                if !error_mode {
+                    if let Some(best_val) = best {
+                        result = Option::Some(TokenRaw::new(self.token_len(), best_val.token_index));
+                    } else {
+                        error_mode = true;
+                    };
+                }
+            } else {
+                // something matched?
+                // TODO actually, returning back from error mode must happen, when something really matched
+                if error_mode {
+                    result = Option::Some(TokenRaw::new(self.token_len(), ERROR_TOKEN_INDEX));
+                    error_mode = false;
+                }
+            }
+            self.position += ch.len_utf8();
+            if result.is_some() {
+                self.token_start = self.position as u32;
+                break;
+            }
+            self.vm.current_threads.clear();
+            swap(&mut self.vm.current_threads, &mut self.vm.next_threads);
+        }
+        if self.position != self.token_start as usize {
+            let pos = self.position as u32;
+            let ts = self.token_start;
+            self.token_start = pos;
+            if let Some(best_val) = best {
+                result = Option::Some(TokenRaw::new(self.token_len(), best_val.token_index));
+            } else {
+                result = Option::Some(TokenRaw::new(self.token_len(), ERROR_TOKEN_INDEX))
+            };
+//            self.position = self.token_start as usize;
+        }
+        result
+    }
+}
+
+
 struct MatchResult {
-    has_match: bool,
-    some_threads_succeed: bool,
+    all_threads_failed: bool,
+    max_matched_token_index: Option<u16>,
 }
 
 impl MatchResult {
-    pub fn new(has_match: bool, some_threads_succeed: bool) -> Self {
-        MatchResult { has_match, some_threads_succeed }
+    pub fn new(all_threads_failed: bool, max_matched_token_index: Option<u16>) -> Self {
+        MatchResult { all_threads_failed, max_matched_token_index }
     }
 }
 
@@ -55,115 +164,52 @@ const END_TOKEN_INDEX: u16 = 1;
 const ERROR_TOKEN_INDEX: u16 = 0;
 
 impl Vm {
-    pub fn tokenize(&mut self, text: &str) -> Vec<TokenRaw> {
-        let mut tokens: Vec<TokenRaw> = Vec::new();
-        let mut token_start: u32 = 0;
-        let mut token_end: u32 = 0;
-        let mut error_mode = false;
-        let mut matched_indices = BitSet::with_capacity(self.token_types_count);
-        self.add_thread(0);
-        swap(&mut self.current_threads, &mut self.next_threads);
-        for ch in text.chars() {
-            eprintln!("self.current_threads = {:?}", self.current_threads);
-            // has a match on this iteration
-            let mut match_res = self.match_char(&mut matched_indices, Option::Some(ch));
-            if !match_res.some_threads_succeed {
-                if matched_indices.is_empty() {
-                    // error path
-                    error_mode = true;
-                } else {
-                    // on previous iteration was last match
-                    let token = TokenRaw::new(
-                        token_end - token_start,
-                        self.max_token_index);
-                    matched_indices.clear();
-                    self.match_char(&mut matched_indices, Option::Some(ch));
-                    tokens.push(token);
-                    self.max_token_index = 0;
-                    token_start = token_end;
-                    self.add_thread(0);
-                    swap(&mut self.current_threads, &mut self.next_threads);
-                }
-            } else {
-                if error_mode {
-                    error_mode = false;
-                    tokens.push(TokenRaw::new(
-                        token_end - token_start,
-                        ERROR_TOKEN_INDEX,
-                    ));
-                    self.max_token_index = 0;
-                    token_start = token_end;
-                    self.add_thread(0);
-                    swap(&mut self.current_threads, &mut self.next_threads);
-                }
-            }
-            token_end += ch.len_utf8() as u32;
-            swap(&mut self.current_threads, &mut self.next_threads);
-        }
-        // tail handling
-        self.match_char(&mut matched_indices, Option::None);
-        if token_start != token_end && !matched_indices.is_empty() {
-            let token_len = token_end - token_start;
-            let token_type_index = if error_mode {
-                ERROR_TOKEN_INDEX
-            } else {
-                self.max_token_index
-            };
-            tokens.push(TokenRaw::new(token_len, token_type_index));
-
-        }
-        // end token is always of index 1
-        tokens.push(TokenRaw::new(0, END_TOKEN_INDEX));
-        tokens
-    }
-
     /// handles all not immediately advancing instructions
-    fn add_thread(&mut self, pc: CodePointer) {
+    fn add_thread(&mut self, pc: CodePointer, to_next: bool) {
         let instruction = self.code[pc as usize];
         match decode(instruction) {
             Instruction::Split { then_instr_index, else_instr_index } => {
-                self.add_thread(then_instr_index);
-                self.add_thread(else_instr_index);
-            },
-            Instruction::Jmp { instr_index } => self.add_thread(instr_index),
+                self.add_thread(then_instr_index, to_next);
+                self.add_thread(else_instr_index, to_next);
+            }
+            Instruction::Jmp { instr_index } => self.add_thread(instr_index, to_next),
             _ => {
-                self.next_threads.insert(pc as usize);
+                if to_next {
+                    self.next_threads.insert(pc as usize);
+                } else {
+                    self.current_threads.insert(pc as usize);
+                }
             }
         }
     }
 
-
-    fn match_char(&mut self, matched_indices: &mut BitSet<u32>, ch: Option<char>) -> MatchResult {
-        let mut has_match = false;
+    fn match_char(&mut self, ch: char) -> MatchResult {
         let mut all_failed = true;
         let mut next: Option<CodePointer> = Option::None;
+        let mut max_matched_token_index = Option::None;
         for code_pointer in self.current_threads.iter() {
             let instruction = self.code[code_pointer];
             match decode(instruction) {
                 // must handle here only strictly advancing operations
                 Instruction::CharImm { ch: instr_ch } => {
-                    if ch.is_some() && instr_ch == ch.unwrap() {
+                    if instr_ch == ch {
                         let new_code_pointer = (code_pointer + 1) as CodePointer;
                         next = Option::Some(new_code_pointer);
                         all_failed = false;
                     }
                 }
                 Instruction::Match { token_type_index } => {
-                    if !has_match {
-                        matched_indices.clear();
-                        has_match = true;
-                    }
-                    matched_indices.insert(token_type_index as usize);
-                    self.max_token_index = std::cmp::max(self.max_token_index, token_type_index)
+                    max_matched_token_index = max_matched_token_index
+                        .map(|value| std::cmp::max(value, token_type_index));
                 }
                 _ => {}
             }
         }
         match next {
-            Some(cp) => self.add_thread(cp),
-            None => {},
+            Some(cp) => self.add_thread(cp, true),
+            None => {}
         }
-        return MatchResult::new(has_match, !all_failed);
+        return MatchResult::new(all_failed, max_matched_token_index);
     }
 }
 
@@ -194,40 +240,40 @@ mod tests {
     use assembler::Assembler;
     use assembler::ProgramData;
 
-//    #[test]
-//    fn single_char() {
-//        let mut asm = Assembler::new();
-//        asm.emit_char_imm('a');
-//        asm.emit_match(2);
-//        test_vm(asm.finish(), 3, "a", vec![
-//            TokenRaw::new(1, 2),
-//            TokenRaw::new(0, END_TOKEN_INDEX)
-//        ])
-//    }
-//
-//    #[test]
-//    fn two_chars() {
-//        let mut asm = Assembler::new();
-//        asm.emit_char_imm('a');
-//        asm.emit_char_imm('a');
-//        asm.emit_match(2);
-//        test_vm(asm.finish(), 3, "aa", vec![
-//            TokenRaw::new(2, 2),
-//            TokenRaw::new(0, END_TOKEN_INDEX)
-//        ])
-//    }
-//
-//    #[test]
-//    fn lex_loop() {
-//        let mut asm = Assembler::new();
-//        asm.emit_char_imm('a');
-//        asm.emit_split(0, 2);
-//        asm.emit_match(2);
-//        test_vm(asm.finish(), 3, "aaaa", vec![
-//            TokenRaw::new(4, 2),
-//            TokenRaw::new(0, END_TOKEN_INDEX)
-//        ])
-//    }
+    #[test]
+    fn single_char() {
+        let mut asm = Assembler::new();
+        asm.emit_char_imm('a');
+        asm.emit_match(2);
+        test_vm(asm.finish(), "a", vec![
+            TokenRaw::new(1, 2),
+            TokenRaw::new(0, END_TOKEN_INDEX)
+        ])
+    }
+
+    #[test]
+    fn two_chars() {
+        let mut asm = Assembler::new();
+        asm.emit_char_imm('a');
+        asm.emit_char_imm('a');
+        asm.emit_match(2);
+        test_vm(asm.finish(), "aa", vec![
+            TokenRaw::new(2, 2),
+            TokenRaw::new(0, END_TOKEN_INDEX)
+        ])
+    }
+
+    #[test]
+    fn lex_loop() {
+        let mut asm = Assembler::new();
+        asm.emit_char_imm('a');
+        asm.emit_split(0, 2);
+        asm.emit_match(2);
+        test_vm(asm.finish(), "aaaa", vec![
+            TokenRaw::new(4, 2),
+            TokenRaw::new(0, END_TOKEN_INDEX)
+        ])
+    }
 
     #[test]
     fn lex_two_tokens() {
@@ -238,16 +284,17 @@ mod tests {
         asm.emit_match(2);
         asm.emit_char_imm('b');
         asm.emit_match(3);
-        test_vm(asm.finish(), 4, "ab", vec![
+        test_vm(asm.finish(), "ab", vec![
             TokenRaw::new(1, 2),
             TokenRaw::new(1, 3),
             TokenRaw::new(0, END_TOKEN_INDEX)
         ])
     }
 
-    fn test_vm(program_data: ProgramData, token_types_count: usize, text: &str, expected_tokens: Vec<TokenRaw>) {
+    fn test_vm(program_data: ProgramData, text: &str, expected_tokens: Vec<TokenRaw>) {
         let mut vm = Vm::new(program_data.code, program_data.constant_pool, 3);
-        let tokens = vm.tokenize(text);
+        let tokens: Vec<TokenRaw> = LexingSession::new(&mut vm, text).take(4).collect();
+//        let tokens = vm.tokenize(text);
         assert_eq!(expected_tokens, tokens);
     }
 }
