@@ -20,7 +20,6 @@ pub struct Vm {
     // TODO put threads to LexerSession
     current_threads: BitSet,
     next_threads: BitSet,
-    token_types_count: usize,
 }
 
 
@@ -33,7 +32,6 @@ impl Vm {
             constant_pool,
             current_threads,
             next_threads: BitSet::with_capacity(token_types_count),
-            token_types_count,
         }
     }
 }
@@ -51,13 +49,6 @@ struct LexingSession<'a, 'b> {
 #[derive(Copy, Clone)]
 struct BestToken {
     token_index: u16,
-    end_position: usize,
-}
-
-impl BestToken {
-    pub fn new(token_index: u16, end_position: usize) -> Self {
-        BestToken { token_index, end_position }
-    }
 }
 
 impl<'a, 'b> LexingSession<'a, 'b> {
@@ -95,22 +86,29 @@ impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
         let mut result = Option::None;
         for ch in text.chars() {
             self.position += ch.len_utf8();
+            let pos = self.position;
             eprintln!("ch = {:?}", ch);
             eprintln!("self.current_threads = {:?}", self.vm.current_threads);
             let match_res = self.vm.match_char(ch);
+            eprintln!("self.next = {:?} ", self.vm.next_threads);
             // trying update BestToken
             if let Some(new_max_index) = match_res.max_matched_token_index {
-                if let Some(max_length_token) = best {
-                    if max_length_token.token_index <= new_max_index {
-                        let new_max_len_info = BestToken::new(new_max_index, self.position);
-                        best = Some(new_max_len_info)
-                    }
+                if error_mode {
+                    self.position -= ch.len_utf8();
+                    result = Option::Some(TokenRaw::new(self.token_len(), ERROR_TOKEN_INDEX));
+                    error_mode = false;
                 } else {
-                    let info = BestToken::new(new_max_index, self.position);
-                    best = Option::Some(info);
+                    if let Some(max_length_token) = best {
+                        if max_length_token.token_index <= new_max_index {
+                            best = Some(BestToken { token_index: new_max_index })
+                        }
+                    } else {
+                        best = Option::Some(BestToken { token_index: new_max_index });
+                    }
                 }
             }
-            if match_res.all_threads_failed {
+            if self.vm.next_threads.is_empty() {
+                eprintln!("Next threads are empty");
                 if !error_mode {
                     if let Some(best_val) = best {
                         result = Option::Some(TokenRaw::new(self.token_len(), best_val.token_index));
@@ -118,20 +116,14 @@ impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
                         error_mode = true;
                     };
                 }
-            } else {
-                // something matched?
-                // TODO actually, returning back from error mode must happen, when something really matched
-                if error_mode {
-                    result = Option::Some(TokenRaw::new(self.token_len(), ERROR_TOKEN_INDEX));
-                    error_mode = false;
-                }
+                self.vm.add_thread(0, true);
             }
+            self.vm.current_threads.clear();
+            swap(&mut self.vm.current_threads, &mut self.vm.next_threads);
             if result.is_some() {
                 self.token_start = self.position as u32;
                 break;
             }
-            self.vm.current_threads.clear();
-            swap(&mut self.vm.current_threads, &mut self.vm.next_threads);
         }
         if self.position != self.token_start as usize {
 
@@ -150,14 +142,7 @@ impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
 
 
 struct MatchResult {
-    all_threads_failed: bool,
     max_matched_token_index: Option<u16>,
-}
-
-impl MatchResult {
-    pub fn new(all_threads_failed: bool, max_matched_token_index: Option<u16>) -> Self {
-        MatchResult { all_threads_failed, max_matched_token_index }
-    }
 }
 
 const END_TOKEN_INDEX: u16 = 1;
@@ -214,7 +199,7 @@ impl Vm {
             Some(cp) => self.add_thread(cp, true),
             None => None
         };
-        return MatchResult::new(all_failed, max_matched_token_index);
+        return MatchResult { max_matched_token_index };
     }
 }
 
@@ -296,9 +281,24 @@ mod tests {
         ])
     }
 
+    #[test]
+    fn lex_error_tokens() {
+        let mut asm = Assembler::new();
+        // a | b regex code
+        asm.emit_char_imm('a');
+        asm.emit_match(2);
+        test_vm(asm.finish(), "abbbaa", vec![
+            TokenRaw::new(1, 2),
+            TokenRaw::new(3, 0),
+            TokenRaw::new(1, 2),
+            TokenRaw::new(1, 2),
+            TokenRaw::new(0, END_TOKEN_INDEX)
+        ])
+    }
+
     fn test_vm(program_data: ProgramData, text: &str, expected_tokens: Vec<TokenRaw>) {
         let mut vm = Vm::new(program_data.code, program_data.constant_pool, 3);
-        let tokens: Vec<TokenRaw> = LexingSession::new(&mut vm, text).take(4).collect();
+        let tokens: Vec<TokenRaw> = LexingSession::new(&mut vm, text).collect();
 //        let tokens = vm.tokenize(text);
         assert_eq!(expected_tokens, tokens);
     }
