@@ -94,6 +94,7 @@ impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
         eprintln!("Lexing at position {:?}", self.position);
         let mut result = Option::None;
         for ch in text.chars() {
+            self.position += ch.len_utf8();
             eprintln!("ch = {:?}", ch);
             eprintln!("self.current_threads = {:?}", self.vm.current_threads);
             let match_res = self.vm.match_char(ch);
@@ -125,7 +126,6 @@ impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
                     error_mode = false;
                 }
             }
-            self.position += ch.len_utf8();
             if result.is_some() {
                 self.token_start = self.position as u32;
                 break;
@@ -134,15 +134,15 @@ impl<'a, 'b> Iterator for LexingSession<'a, 'b> {
             swap(&mut self.vm.current_threads, &mut self.vm.next_threads);
         }
         if self.position != self.token_start as usize {
-            let pos = self.position as u32;
-            let ts = self.token_start;
-            self.token_start = pos;
+
             if let Some(best_val) = best {
                 result = Option::Some(TokenRaw::new(self.token_len(), best_val.token_index));
             } else {
                 result = Option::Some(TokenRaw::new(self.token_len(), ERROR_TOKEN_INDEX))
             };
-//            self.position = self.token_start as usize;
+            let pos = self.position as u32;
+            let ts = self.token_start;
+            self.token_start = pos;
         }
         result
     }
@@ -165,28 +165,36 @@ const ERROR_TOKEN_INDEX: u16 = 0;
 
 impl Vm {
     /// handles all not immediately advancing instructions
-    fn add_thread(&mut self, pc: CodePointer, to_next: bool) {
+    fn add_thread(&mut self, pc: CodePointer, to_next: bool) -> Option<u16> {
         let instruction = self.code[pc as usize];
-        match decode(instruction) {
+        return match decode(instruction) {
             Instruction::Split { then_instr_index, else_instr_index } => {
-                self.add_thread(then_instr_index, to_next);
-                self.add_thread(else_instr_index, to_next);
+                let left = self.add_thread(then_instr_index, to_next);
+                let right = self.add_thread(else_instr_index, to_next);
+                if let Some(left_val) = left {
+                    right.map(|right_val|std::cmp::max(left_val, right_val))
+                } else {
+                    right
+                }
             }
             Instruction::Jmp { instr_index } => self.add_thread(instr_index, to_next),
+            Instruction::Match { token_type_index } => {
+                Some(token_type_index)
+            }
             _ => {
                 if to_next {
                     self.next_threads.insert(pc as usize);
                 } else {
                     self.current_threads.insert(pc as usize);
                 }
+                None
             }
-        }
+        };
     }
 
     fn match_char(&mut self, ch: char) -> MatchResult {
         let mut all_failed = true;
-        let mut next: Option<CodePointer> = Option::None;
-        let mut max_matched_token_index = Option::None;
+        let mut next: Option<CodePointer> = None;
         for code_pointer in self.current_threads.iter() {
             let instruction = self.code[code_pointer];
             match decode(instruction) {
@@ -194,21 +202,18 @@ impl Vm {
                 Instruction::CharImm { ch: instr_ch } => {
                     if instr_ch == ch {
                         let new_code_pointer = (code_pointer + 1) as CodePointer;
-                        next = Option::Some(new_code_pointer);
+                        next = Some(new_code_pointer);
                         all_failed = false;
                     }
                 }
-                Instruction::Match { token_type_index } => {
-                    max_matched_token_index = max_matched_token_index
-                        .map(|value| std::cmp::max(value, token_type_index));
-                }
+
                 _ => {}
             }
         }
-        match next {
+        let max_matched_token_index = match next {
             Some(cp) => self.add_thread(cp, true),
-            None => {}
-        }
+            None => None
+        };
         return MatchResult::new(all_failed, max_matched_token_index);
     }
 }
