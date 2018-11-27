@@ -10,6 +10,7 @@ impl LexerDefinition {
     }
 }
 
+#[derive(Clone)]
 pub enum Expr {
     Single { ch: char },
     Range { from: char, to: char },

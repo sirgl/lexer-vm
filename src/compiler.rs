@@ -35,13 +35,13 @@ impl Compiler {
     }
 
     pub fn generate_lexer(&mut self, definition: &LexerDefinition) {
-        let mut positions = Vec::new();
-        let marker = self.asm.emit_split_many();
-        for token_def in &definition.tokens {
-            positions.push(self.asm.next_code_position());
-            self.generate_token_expr(&token_def);
-        }
-        self.asm.patch_split_many(&marker, positions);
+        let indices: Vec<u16> = definition.tokens.iter()
+            .map(|el| el.index)
+            .collect();
+        let expressions : Vec<Expr> = definition.tokens.iter()
+            .map(|el| el.expr.clone())
+            .collect();
+        self.generate_or(&expressions, Some(indices))
     }
 
     pub fn generate_token_expr(&mut self, definition: &TokenDefinition) {
@@ -58,26 +58,7 @@ impl Compiler {
                 self.asm.emit_range_imm(*from, *to);
             },
             Expr::Or { variants } => {
-                match variants.len() {
-                    // TODO 1
-                    1 => {
-                        self.generate(&variants[0])
-                    }
-                    2 => {
-                        let left = &variants[0];
-                        let right = &variants[1];
-                        self.generate_split(left, right)
-                    }
-                    _ => {
-                        let mut positions = Vec::new();
-                        let marker = self.asm.emit_split_many();
-                        for variant in variants {
-                            positions.push(self.asm.next_code_position());
-                            self.generate(variant);
-                        }
-                        self.asm.patch_split_many(&marker, positions);
-                    }
-                }
+                self.generate_or(variants, None)
             },
             Expr::Seq { exprs } => {
                 for e in exprs {
@@ -87,12 +68,46 @@ impl Compiler {
         }
     }
 
-    fn generate_split(&mut self, left: &Expr, right: &Expr) {
+    fn generate_or(&mut self, variants: &Vec<Expr>, type_indices: Option<Vec<u16>>) -> () {
+        match variants.len() {
+            1 => {
+                self.generate(&variants[0]);
+                if let Some(ref indices) = type_indices {
+                    self.asm.emit_match(indices[0])
+                }
+            }
+            2 => {
+                let left = &variants[0];
+                let right = &variants[1];
+                self.generate_split(left, right, type_indices)
+            }
+            _ => {
+                let mut positions = Vec::new();
+                let marker = self.asm.emit_split_many();
+                for (index, variant) in variants.iter().enumerate() {
+                    positions.push(self.asm.next_code_position());
+                    self.generate(variant);
+                    if let Some(ref indices) = type_indices {
+                        self.asm.emit_match(indices[index])
+                    }
+                }
+                self.asm.patch_split_many(&marker, positions);
+            }
+        }
+    }
+
+    fn generate_split(&mut self, left: &Expr, right: &Expr, type_indices: Option<Vec<u16>>) {
         let (left_patch, right_patch) = self.asm.emit_split(0, 0);
         let left_target = self.asm.next_code_position();
         self.generate(left);
+        if let Some(ref indices) = type_indices {
+            self.asm.emit_match(indices[0])
+        }
         let right_target = self.asm.next_code_position();
         self.generate(right);
+        if let Some(ref indices) = type_indices {
+            self.asm.emit_match(indices[1])
+        }
         self.asm.patch_target(&left_patch, left_target);
         self.asm.patch_target(&right_patch, right_target);
     }
@@ -129,14 +144,13 @@ mod tests {
             ]
         };
         check_compiler(&mut compiler, &lexer_definition, vec![
-            SplitMany { table_index: 0 },
             CharImm { ch: 'a' },
             CharImm { ch: 'b' },
-            Split { then_instr_index: 4, else_instr_index: 5 },
+            Split { then_instr_index: 3, else_instr_index: 4 },
             CharImm { ch: 'c' },
             CharImm { ch: 'd' },
             Match { token_type_index: 2 }
-        ], vec![1]);
+        ], vec![]);
     }
 
     #[test]
@@ -156,10 +170,9 @@ mod tests {
             ]
         };
         check_compiler(&mut compiler, &lexer_definition, vec![
-            SplitMany { table_index: 0 },
             RangeImm { from: 'a', to: 'z' },
             Match { token_type_index: 2 }
-        ], vec![1]);
+        ], vec![]);
     }
 
     #[test]
@@ -188,14 +201,14 @@ mod tests {
             ]
         };
         check_compiler(&mut compiler, &lexer_definition, vec![
-            SplitMany { table_index: 0 },
+            Split { then_instr_index: 1, else_instr_index: 4 },
             CharImm { ch: 'a' },
             CharImm { ch: 'b' },
             Match { token_type_index: 2 },
             CharImm { ch: 'c' },
             CharImm { ch: 'd' },
             Match { token_type_index: 3 }
-        ], vec![1, 4]);
+        ], vec![]);
     }
 
     fn check_compiler(compiler: &mut Compiler, lexer_definition: &LexerDefinition, expected: Vec<Instruction>, pool: Vec<u32>) {

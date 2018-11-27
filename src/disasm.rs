@@ -6,7 +6,7 @@ use std::char::from_u32;
 use std::fmt;
 use std::fmt::Formatter;
 
-pub fn decode<'a>(code: u32) -> Instruction {
+pub fn decode(code: u32) -> Instruction {
     let opcode = Opcode::from(code >> 28);
     let payload = trim_tag(code);
     match opcode {
