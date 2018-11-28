@@ -191,6 +191,13 @@ impl Vm {
                         all_failed = false;
                     }
                 }
+                Instruction::RangeImm { from, to } => {
+                    if ch >= from && ch <= to {
+                        let new_code_pointer = (code_pointer + 1) as CodePointer;
+                        next = Some(new_code_pointer);
+                        all_failed = false;
+                    }
+                }
 
                 _ => {}
             }
@@ -236,6 +243,18 @@ mod tests {
         asm.emit_char_imm('a');
         asm.emit_match(2);
         test_vm(asm.finish(), "a", vec![
+            TokenRaw::new(1, 2),
+            TokenRaw::new(0, END_TOKEN_INDEX)
+        ])
+    }
+
+
+    #[test]
+    fn range() {
+        let mut asm = Assembler::new();
+        asm.emit_range_imm('a', 'z');
+        asm.emit_match(2);
+        test_vm(asm.finish(), "v", vec![
             TokenRaw::new(1, 2),
             TokenRaw::new(0, END_TOKEN_INDEX)
         ])
