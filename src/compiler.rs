@@ -65,6 +65,14 @@ impl Compiler {
                     self.generate(e);
                 }
             },
+            Expr::Loop { expr } => {
+                let next_position = self.asm.next_code_position();
+                let (_, forward) = self.asm.emit_split(next_position, 0);
+//                self.generate(expr);
+//                self.asm.emit_split();
+//                self.asm.emit_noop()
+                // TODO
+            }
         }
     }
 

@@ -16,6 +16,7 @@ pub enum Expr {
     Range { from: char, to: char },
     Or { variants: Vec<Expr> },
     Seq { exprs: Vec<Expr> },
+    Loop { expr: Box<Expr> }
 }
 
 pub struct TokenDefinition {

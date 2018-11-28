@@ -65,6 +65,10 @@ impl Assembler {
         self.emit_instr(Opcode::Jmp, instr_index as u32)
     }
 
+    pub fn emit_noop(&mut self) {
+        self.emit_instr(Opcode::Noop, 0)
+    }
+
     pub fn emit_split_many(&mut self) -> SplitManyMarker {
         let table_marker = SplitManyMarker { position: self.next_code_position() };
         self.emit_instr(Opcode::SplitMany, 0);

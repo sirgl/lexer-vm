@@ -12,6 +12,7 @@ pub enum Opcode {
     Invert = 8,
     SplitMany = 9,
     OuterLexer = 10,
+    Noop = 11
 }
 
 impl Opcode {
@@ -34,6 +35,7 @@ impl From<u32> for Opcode {
             8 => Opcode::Invert,
             9 => Opcode::SplitMany,
             10 => Opcode::OuterLexer,
+            11 => Opcode::Noop,
             _ => panic!("Bad opcode")
         }
     }
