@@ -66,12 +66,14 @@ impl Compiler {
                 }
             },
             Expr::Loop { expr } => {
-                let next_position = self.asm.next_code_position();
-                let (_, forward) = self.asm.emit_split(next_position, 0);
-//                self.generate(expr);
-//                self.asm.emit_split();
-//                self.asm.emit_noop()
-                // TODO
+                let (forward_to_loop_start, forward_to_after_loop) = self.asm.emit_split(0, 0);
+                let loop_start = self.asm.next_code_position();
+                self.generate(expr);
+                let (_, after_loop_mk) = self.asm.emit_split(loop_start, 0);
+                let after_loop = self.asm.next_code_position();
+                self.asm.patch_target(&forward_to_after_loop, after_loop);
+                self.asm.patch_target(&after_loop_mk, after_loop);
+                self.asm.patch_target(&forward_to_loop_start, loop_start);
             }
         }
     }
@@ -216,6 +218,27 @@ mod tests {
             CharImm { ch: 'c' },
             CharImm { ch: 'd' },
             Match { token_type_index: 3 }
+        ], vec![]);
+    }
+
+    #[test]
+    fn compile_loop(){
+        let mut compiler = Compiler::new();
+        let expr = Expr::Loop { expr: Box::new(Expr::Single { ch: 'a' })};
+        let lexer_definition = LexerDefinition {
+            tokens: vec![
+                TokenDefinition {
+                    expr,
+                    index: 2,
+                    name: "foo".to_string()
+                }
+            ]
+        };
+        check_compiler(&mut compiler, &lexer_definition, vec![
+            Split { then_instr_index: 1, else_instr_index: 3 },
+            CharImm { ch: 'a' },
+            Split { then_instr_index: 1, else_instr_index: 3 },
+            Match { token_type_index: 2 }
         ], vec![]);
     }
 
